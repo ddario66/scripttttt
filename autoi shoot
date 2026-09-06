@@ -11,8 +11,7 @@ local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 
 local Settings = {
-    SilentAimPC = false,
-    SilentAimMobile = false,
+    SilentAim = false,          -- renamed from SilentAimPC
     BringEnemy = false,
     Triggerbot = false,
     SpeedBoost = false,
@@ -380,7 +379,6 @@ local function CreateSlider(parent, text, min, max, default, callback)
     Fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
     Fill.BorderSizePixel = 0
     Instance.new("UICorner", Fill).CornerRadius = UDim.new(1, 0)
-    -- Changed to TextButton for touch compatibility
     local Knob = Instance.new("TextButton")
     Knob.Parent = Bar
     Knob.BackgroundColor3 = Colors.Text
@@ -439,17 +437,13 @@ CreateLabel(InfoPage, "  Made for Hood Rivals")
 -- TAB 2: COMBAT
 local CombatPage = CreateTab("Combat", "Gun")
 CreateSection(CombatPage, "SILENT AIM")
-CreateToggle(CombatPage, "Silent Aim (PC)", false, function(v)
-    Settings.SilentAimPC = v
-end)
-CreateToggle(CombatPage, "Silent Aim (Mobile No Auto Shoot)", false, function(v)
-    Settings.SilentAimMobile = v
+CreateToggle(CombatPage, "Silent Aim", false, function(v)
+    Settings.SilentAim = v
 end)
 CreateToggle(CombatPage, "bring enemie (works the best with shootgun)", false, function(v)
     Settings.BringEnemy = v
 end)
 CreateLabel(CombatPage, "  PC mode = camlock + first person + auto shoot")
-CreateLabel(CombatPage, "  Mobile mode = camlock + first person, no click")
 CreateLabel(CombatPage, "  bring enemies infront of u")
 
 CreateSection(CombatPage, "TRIGGERBOT")
@@ -646,7 +640,7 @@ end
 local function StopBringEnemy()
     if bringEnemyConn then bringEnemyConn:Disconnect(); bringEnemyConn = nil end
     releaseAll()
-    if not Settings.SilentAimPC and not Settings.SilentAimMobile then
+    if not Settings.SilentAim then
         LocalPlayer.CameraMode = Enum.CameraMode.Classic
     end
 end
@@ -783,27 +777,29 @@ end
 local noRecoilConn = nil
 local noRecoilChildAdded = nil
 
+local function ApplyNoRecoil(weapon)
+    local stats = weapon:FindFirstChild("Stats")
+    if stats then
+        local recoil = stats:FindFirstChild("Recoil")
+        if recoil and recoil:IsA("NumberValue") then recoil.Value = -1 end
+    end
+end
+
 local function StartNoRecoil()
     if noRecoilConn then return end
     local folder = workspace:FindFirstChild(LocalPlayer.Name)
     if not folder then return end
     noRecoilConn = RunService.Heartbeat:Connect(function()
         for _, weapon in ipairs(folder:GetChildren()) do
-            local stats = weapon:FindFirstChild("Stats")
-            if stats then
-                local recoil = stats:FindFirstChild("Recoil")
-                if recoil and recoil:IsA("NumberValue") and recoil.Value ~= -1 then recoil.Value = -1 end
+            if weapon:IsA("Model") then
+                ApplyNoRecoil(weapon)
             end
         end
     end)
     if not noRecoilChildAdded then
         noRecoilChildAdded = folder.ChildAdded:Connect(function(weapon)
             task.wait(0.1)
-            local stats = weapon:FindFirstChild("Stats")
-            if stats then
-                local recoil = stats:FindFirstChild("Recoil")
-                if recoil and recoil:IsA("NumberValue") then recoil.Value = -1 end
-            end
+            ApplyNoRecoil(weapon)
         end)
     end
 end
@@ -819,6 +815,14 @@ end
 local rapidFireConn = nil
 local rapidFireChildAdded = nil
 
+local function ApplyRapidFire(weapon)
+    local stats = weapon:FindFirstChild("Stats")
+    if stats then
+        local fireRate = stats:FindFirstChild("FireRate")
+        if fireRate and fireRate:IsA("NumberValue") and fireRate.Value ~= 0 then fireRate.Value = 0 end
+    end
+end
+
 local function StartRapidFire()
     if rapidFireConn then return end
     local playerWeaponFolder = workspace:FindFirstChild(LocalPlayer.Name)
@@ -827,23 +831,13 @@ local function StartRapidFire()
         if not playerWeaponFolder or not playerWeaponFolder.Parent then return end
         for _, weapon in ipairs(playerWeaponFolder:GetChildren()) do
             if weapon:IsA("Model") then
-                local stats = weapon:FindFirstChild("Stats")
-                if stats then
-                    local fireRate = stats:FindFirstChild("FireRate")
-                    if fireRate and fireRate:IsA("NumberValue") and fireRate.Value ~= 0 then fireRate.Value = 0 end
-                end
+                ApplyRapidFire(weapon)
             end
         end
     end)
     rapidFireChildAdded = playerWeaponFolder.ChildAdded:Connect(function(weapon)
         task.wait(0.1)
-        if Settings.RapidFire and weapon:IsA("Model") then
-            local stats = weapon:FindFirstChild("Stats")
-            if stats then
-                local fireRate = stats:FindFirstChild("FireRate")
-                if fireRate and fireRate:IsA("NumberValue") then fireRate.Value = 0 end
-            end
-        end
+        ApplyRapidFire(weapon)
     end)
 end
 
@@ -946,10 +940,9 @@ function isAlive(enemy)
 end
 
 function updateCamlock()
-    local anyEnabled = Settings.SilentAimPC or Settings.SilentAimMobile
-    if not anyEnabled then return end
+    if not Settings.SilentAim then return end
     local enemy = getClosestEnemy()
-    if enemy and isVisible(enemy) then
+    if enemy and isVisible(enemy) and isAlive(enemy) then
         targetEnemy = enemy
         Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, enemy.Character.Head.Position)
     else
@@ -964,6 +957,11 @@ local function fireGun()
     if not gun then return end
     local stats = gun:FindFirstChild("Stats")
     if not stats then return end
+    -- Ensure we don't fire at a dead target
+    if targetEnemy and not isAlive(targetEnemy) then
+        targetEnemy = nil
+        return
+    end
     local clip = stats:FindFirstChild("ClipSize")
     if clip and clip.Value <= 0 then
         debug.setupvalue(onFireFn, 7, false)
@@ -999,24 +997,23 @@ function triggerShoot()
 end
 
 local function UpdateCombat()
-    local anyEnabled = Settings.SilentAimPC or Settings.SilentAimMobile
-    if anyEnabled then
+    if Settings.SilentAim then
         LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
     else
         LocalPlayer.CameraMode = Enum.CameraMode.Classic
     end
 
-    if anyEnabled and not camlockConn then
+    if Settings.SilentAim and not camlockConn then
         camlockConn = RunService.RenderStepped:Connect(updateCamlock)
-    elseif not anyEnabled and camlockConn then
+    elseif not Settings.SilentAim and camlockConn then
         camlockConn:Disconnect(); camlockConn = nil; targetEnemy = nil
     end
 
-    if Settings.SilentAimPC and not shootConn then
+    if Settings.SilentAim and not shootConn then
         shootConn = RunService.Heartbeat:Connect(function()
             shoot()
         end)
-    elseif not Settings.SilentAimPC and shootConn then
+    elseif not Settings.SilentAim and shootConn then
         shootConn:Disconnect(); shootConn = nil
     end
 
@@ -1366,7 +1363,8 @@ end)
 -- ==========================================================--
 --  MAIN LOOP (protected with pcall)
 -- ==========================================================--
-local oldPC, oldMobile, oldTrigger = false, false, false
+local oldSilentAim = false
+local oldTrigger = false
 local oldESP, oldName, oldSkel = false, false, false
 local oldHitbox = false
 local oldNoRecoil = false
@@ -1377,10 +1375,9 @@ local oldAutoGunType = false
 findGunFunctions()
 
 RunService.Heartbeat:Connect(function()
-    -- Wrap each feature activation to prevent one error from breaking the loop
     pcall(function()
-        if Settings.SilentAimPC ~= oldPC or Settings.SilentAimMobile ~= oldMobile then
-            oldPC = Settings.SilentAimPC; oldMobile = Settings.SilentAimMobile
+        if Settings.SilentAim ~= oldSilentAim then
+            oldSilentAim = Settings.SilentAim
         end
         if Settings.Triggerbot ~= oldTrigger then oldTrigger = Settings.Triggerbot end
     end)
