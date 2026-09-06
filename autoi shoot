@@ -4,7 +4,27 @@ local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
 local autoShooting = false
-local reloading = false
+local onFireFn = nil
+local reloadFn = nil
+local activeThread = nil
+
+local function findFunctions()
+    local found = 0
+    for _, fn in filtergc("function", {}, false) do
+        local info = debug.getinfo(fn)
+        if info and info.source == "=Workspace." .. LocalPlayer.Name .. ".FirearmLocal" then
+            if info.name == "OnFire" then
+                onFireFn = fn
+                found += 1
+            elseif info.name == "Reload" then
+                reloadFn = fn
+                found += 1
+            end
+            if found >= 2 then break end
+        end
+    end
+    return found >= 1
+end
 
 local function getGun()
     local char = LocalPlayer.Character
@@ -12,77 +32,111 @@ local function getGun()
     return char:FindFirstChildWhichIsA("Tool")
 end
 
-local function startAutoShoot()
-    if autoShooting or reloading then return end
+-- UI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AutoShootGUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 160, 0, 60)
+frame.Position = UDim2.new(0.5, -80, 0, 20)
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+frame.BorderSizePixel = 0
+frame.Parent = screenGui
+frame.Active = true
+frame.Draggable = true
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(1, -16, 0, 40)
+toggleBtn.Position = UDim2.new(0, 8, 0, 10)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+toggleBtn.Text = "AUTO: OFF"
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.TextScaled = true
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.BorderSizePixel = 0
+toggleBtn.Parent = frame
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 8)
+
+local function stopAuto()
+    autoShooting = false
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+    toggleBtn.Text = "AUTO: OFF"
+    if onFireFn then
+        debug.setupvalue(onFireFn, 7, false)
+    end
+    if activeThread then
+        task.cancel(activeThread)
+        activeThread = nil
+    end
+end
+
+local function startAuto()
+    if autoShooting then return end
+    if not onFireFn and not findFunctions() then
+        warn("[AutoShoot] No gun script found - equip a gun!")
+        return
+    end
     local gun = getGun()
     if not gun then
-        warn("[AutoShoot] No gun equipped")
+        warn("[AutoShoot] Equip a gun first!")
         return
     end
     autoShooting = true
-    mouse1press()
-    warn("[AutoShoot] ON - " .. gun.Name)
-end
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 40)
+    toggleBtn.Text = "AUTO: ON"
 
-local function stopAutoShoot()
-    autoShooting = false
-    reloading = false
-    mouse1release()
-    warn("[AutoShoot] OFF")
-end
-
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.KeyCode == Enum.KeyCode.U then
-        if autoShooting then
-            stopAutoShoot()
-        else
-            startAutoShoot()
-        end
-    end
-end)
-
-LocalPlayer.CharacterAdded:Connect(function()
-    autoShooting = false
-    reloading = false
-    task.wait(1)
-    startAutoShoot()
-end)
-
-RunService.Heartbeat:Connect(function()
-    if not autoShooting then return end
-    local gun = getGun()
-    if not gun then
-        stopAutoShoot()
-        return
-    end
-    local stats = gun:FindFirstChild("Stats")
-    if not stats then return end
-    local clip = stats:FindFirstChild("ClipSize")
-    if clip and clip.Value <= 0 and not reloading then
-        reloading = true
-        mouse1release()
-        task.wait(0.1)
-        local weaponHud = LocalPlayer.PlayerGui:FindFirstChild("WeaponHud")
-        if weaponHud then
-            local reloadBtn = weaponHud:FindFirstChild("Reload")
-            if reloadBtn and reloadBtn.Visible then
-                local absPos = reloadBtn.AbsolutePosition
-                local absSize = reloadBtn.AbsoluteSize
-                mousemoveabs(absPos.X + absSize.X / 2, absPos.Y + absSize.Y / 2)
-                task.wait(0.05)
-                mouse1click()
+    activeThread = task.spawn(function()
+        while autoShooting do
+            local gun = getGun()
+            if not gun then
+                stopAuto()
+                return
+            end
+            local stats = gun:FindFirstChild("Stats")
+            if not stats then
+                stopAuto()
+                return
+            end
+            local clip = stats:FindFirstChild("ClipSize")
+            if clip and clip.Value <= 0 then
+                debug.setupvalue(onFireFn, 7, false)
+                if reloadFn then
+                    task.spawn(reloadFn)
+                end
+                local reloadTime = stats:FindFirstChild("ReloadTime")
+                task.wait(reloadTime and reloadTime.Value or 2)
+            else
+                debug.setupvalue(onFireFn, 7, true)
+                local ok, err = pcall(onFireFn)
+                if not ok then
+                    warn("[AutoShoot] Fire error:", err)
+                    task.wait(0.1)
+                end
             end
         end
-        local reloadTime = stats:FindFirstChild("ReloadTime")
-        task.wait(reloadTime and reloadTime.Value or 2)
-        reloading = false
-        if autoShooting then
-            mouse1press()
-        end
+    end)
+end
+
+toggleBtn.MouseButton1Click:Connect(function()
+    if autoShooting then
+        stopAuto()
+    else
+        startAuto()
     end
 end)
 
-task.wait(1)
-startAutoShoot()
-warn("[AutoShoot] Loaded - Auto-shooting ON. Press U to toggle.")
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+findFunctions()
+
+LocalPlayer.CharacterAdded:Connect(function()
+    stopAuto()
+    onFireFn = nil
+    reloadFn = nil
+    task.wait(2)
+    findFunctions()
+end)
+
+warn("[AutoShoot] Loaded - Click the button to toggle.")
