@@ -1,3 +1,4 @@
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -113,8 +114,9 @@ local function startAuto()
                 local ok, err = pcall(onFireFn)
                 if not ok then
                     warn("[AutoShoot] Fire error:", err)
-                    task.wait(0.1)
                 end
+                local fireRate = stats:FindFirstChild("FireRate")
+                task.wait(fireRate and fireRate.Value or 0.1)
             end
         end
     end)
