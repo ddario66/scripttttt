@@ -1,7 +1,6 @@
 -- DDAARIUSPR GUI – Hood Rivals
 -- Xeno Executor | RightShift to toggle GUI
 -- Centered & Mobile Draggable
--- Auto‑Fire fixed: proper fire‑rate delays and reload handling
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -55,7 +54,7 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = game.CoreGui
 
--- Shadow (centered)
+-- Shadow (centered, slightly larger)
 local Shadow = Instance.new("Frame")
 Shadow.Parent = ScreenGui
 Shadow.BackgroundColor3 = Color3.new(0, 0, 0)
@@ -127,7 +126,7 @@ CloseBtn.TextColor3 = Colors.Text
 CloseBtn.TextSize = 12
 Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
 
--- DD Button
+-- DD Button (shows when GUI closed)
 local DDButton = Instance.new("TextButton")
 DDButton.Name = "DDButton"
 DDButton.Parent = ScreenGui
@@ -457,14 +456,14 @@ CreateSection(CombatPage, "SILENT AIM")
 CreateToggle(CombatPage, "Silent Aim (PC)", false, function(v)
     Settings.SilentAimPC = v
 end)
-CreateToggle(CombatPage, "Silent Aim (Mobile No Auto Shoot)", false, function(v)
+CreateToggle(CombatPage, "Silent Aim (Mobile + Auto Shoot)", false, function(v)
     Settings.SilentAimMobile = v
 end)
 CreateToggle(CombatPage, "bring enemie (works the best with shootgun)", false, function(v)
     Settings.BringEnemy = v
 end)
 CreateLabel(CombatPage, "  PC mode = camlock + first person + auto M1")
-CreateLabel(CombatPage, "  Mobile mode = camlock + first person, no click")
+CreateLabel(CombatPage, "  Mobile mode = camlock + first person + auto shoot (OnFire)")
 CreateLabel(CombatPage, "  bring enemies infront of u")
 
 CreateSection(CombatPage, "TRIGGERBOT")
@@ -750,7 +749,7 @@ local function StopBringEnemy()
 end
 
 -- ==========================================================--
---  FLY SYSTEM (WeAreDevs - GUI toggle only)
+--  FLY SYSTEM (WeAreDevs - GUI toggle only, no keybind)
 -- ==========================================================--
 local flying = false
 local bg = nil
@@ -830,6 +829,7 @@ local function StopFly()
     flying = false
 end
 
+-- Handle WASD via UserInputService (checked inside Fly loop)
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Enum.KeyCode.W then ctrl.f = 1 end
@@ -846,7 +846,7 @@ UserInputService.InputEnded:Connect(function(input, gp)
 end)
 
 -- ==========================================================--
---  AUTO GUN TYPE SYSTEM
+--  AUTO GUN TYPE SYSTEM (Universal - All Players)
 -- ==========================================================--
 local autoGunTypeConn = nil
 local GUN_TYPE_VALUE = "Auto"
@@ -1004,6 +1004,9 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     if Settings.RapidFire then StartRapidFire() end
     if Settings.BringEnemy then StartBringEnemy() end
     if Settings.AutoGunType then StartAutoGunType() end
+    StopMobileAutoShoot()  -- reset mobile auto-shoot on respawn
+    onFireFn = nil
+    reloadFn = nil
 end)
 
 -- ==========================================================--
@@ -1013,6 +1016,83 @@ local targetEnemy = nil
 local camlockConn = nil
 local shootConn = nil
 local triggerConn = nil
+local mobileAutoShootConn = nil
+
+-- Firearm functions (for mobile auto-shoot)
+local onFireFn = nil
+local reloadFn = nil
+
+local function FindFirearmFunctions()
+    onFireFn = nil
+    reloadFn = nil
+    local found = 0
+    for _, fn in filtergc("function", {}, false) do
+        local info = debug.getinfo(fn)
+        if info and info.source == "=Workspace." .. LocalPlayer.Name .. ".FirearmLocal" then
+            if info.name == "OnFire" then
+                onFireFn = fn
+                found += 1
+            elseif info.name == "Reload" then
+                reloadFn = fn
+                found += 1
+            end
+            if found >= 2 then break end
+        end
+    end
+    return found >= 1
+end
+
+local function StartMobileAutoShoot()
+    if mobileAutoShootConn then return end
+    if not onFireFn and not FindFirearmFunctions() then
+        warn("[SilentAim Mobile] No firearm functions found - equip a gun first.")
+        return
+    end
+    mobileAutoShootConn = RunService.Heartbeat:Connect(function()
+        if not Settings.SilentAimMobile then return end
+        if not targetEnemy or not isAlive(targetEnemy) or not isVisible(targetEnemy) or not isLockedOn(targetEnemy) then
+            if onFireFn then debug.setupvalue(onFireFn, 7, false) end
+            return
+        end
+        local gun = getCurrentGun()
+        if not gun then
+            if onFireFn then debug.setupvalue(onFireFn, 7, false) end
+            return
+        end
+        local stats = gun:FindFirstChild("Stats")
+        if not stats then
+            if onFireFn then debug.setupvalue(onFireFn, 7, false) end
+            return
+        end
+        local clip = stats:FindFirstChild("ClipSize")
+        if clip and clip.Value <= 0 then
+            if onFireFn then debug.setupvalue(onFireFn, 7, false) end
+            if reloadFn then
+                task.spawn(reloadFn)
+            end
+            local reloadTime = stats:FindFirstChild("ReloadTime")
+            task.wait(reloadTime and reloadTime.Value or 2)
+        else
+            if onFireFn then debug.setupvalue(onFireFn, 7, true) end
+            local ok, err = pcall(onFireFn)
+            if not ok then warn("[SilentAim Mobile] Fire error:", err) end
+            local fireRate = stats:FindFirstChild("FireRate")
+            task.wait(fireRate and fireRate.Value or Settings.FireRate)
+        end
+    end)
+end
+
+local function StopMobileAutoShoot()
+    if mobileAutoShootConn then
+        mobileAutoShootConn:Disconnect()
+        mobileAutoShootConn = nil
+    end
+    if onFireFn then
+        debug.setupvalue(onFireFn, 7, false)
+    end
+    onFireFn = nil
+    reloadFn = nil
+end
 
 function getCurrentGun()
     local char = LocalPlayer.Character
@@ -1086,57 +1166,17 @@ function isAlive(enemy)
 end
 
 function clickM1()
-    if mouse1click then mouse1click() end
+    local vim = game:GetService("VirtualInputManager")
+    vim:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+    wait(0.05)
+    vim:SendMouseButtonEvent(0, 0, 0, false, game, 0)
 end
 
--- ==========================================================--
---  FIXED AUTO-SHOOT: proper fire rate + reload handling
--- ==========================================================--
-local function shootWithDelay()
+function shoot()
     if not getCurrentGun() then return end
     if not targetEnemy or not isAlive(targetEnemy) then targetEnemy = nil; return end
     if not isVisible(targetEnemy) or not isLockedOn(targetEnemy) then return end
-
-    local gun = getCurrentGun()
-    if not gun then return end
-    local stats = gun:FindFirstChild("Stats")
-    if not stats then return end
-
-    -- Check clip
-    local clip = stats:FindFirstChild("ClipSize")
-    if clip and clip.Value <= 0 then
-        -- Reload: find the tool's Reload function or just wait reload time
-        local reloadTime = stats:FindFirstChild("ReloadTime")
-        if reloadTime then
-            -- Simulate reload by waiting and resetting clip
-            local clipSize = stats:FindFirstChild("ClipSizeMax") or stats:FindFirstChild("ClipSize")
-            if clipSize then
-                task.wait(reloadTime.Value)
-                clip.Value = clipSize.Value  -- reset clip
-            else
-                task.wait(reloadTime.Value)
-            end
-        else
-            task.wait(2) -- fallback
-        end
-        return
-    end
-
-    -- Fire
     clickM1()
-
-    -- Decrease clip (if we can track it)
-    if clip then
-        clip.Value = math.max(0, clip.Value - 1)
-    end
-
-    -- Wait for fire rate
-    local fireRate = stats:FindFirstChild("FireRate")
-    if fireRate then
-        task.wait(fireRate.Value)
-    else
-        task.wait(Settings.FireRate)
-    end
 end
 
 function triggerShoot()
@@ -1176,24 +1216,20 @@ local function UpdateCombat()
         targetEnemy = nil
     end
 
-    -- Silent Aim PC: use the fixed shoot loop
     if Settings.SilentAimPC and not shootConn then
         shootConn = RunService.Heartbeat:Connect(function()
-            shootWithDelay()
+            shoot()
+            wait(Settings.FireRate)
         end)
     elseif not Settings.SilentAimPC and shootConn then
         shootConn:Disconnect()
         shootConn = nil
     end
 
-    if Settings.Triggerbot and not triggerConn then
-        triggerConn = RunService.Heartbeat:Connect(function()
-            triggerShoot()
-            wait(Settings.FireRate) -- still uses old simple delay for triggerbot
-        end)
-    elseif not Settings.Triggerbot and triggerConn then
-        triggerConn:Disconnect()
-        triggerConn = nil
+    if Settings.SilentAimMobile and not mobileAutoShootConn then
+        StartMobileAutoShoot()
+    elseif not Settings.SilentAimMobile and mobileAutoShootConn then
+        StopMobileAutoShoot()
     end
 
     if Settings.BringEnemy then
