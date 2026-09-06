@@ -1,0 +1,147 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local autoShooting = false
+local reloading = false
+
+-- ===== GUI CREATION =====
+local function createToggleGUI()
+    -- Check if GUI already exists to avoid duplicates
+    if LocalPlayer.PlayerGui:FindFirstChild("AutoShootGUI") then
+        return
+    end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AutoShootGUI"
+    screenGui.Parent = LocalPlayer.PlayerGui
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 160, 0, 50)
+    frame.Position = UDim2.new(1, -180, 0, 10) -- top‑right with padding
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BackgroundTransparency = 0.2
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(1, -10, 1, -10)
+    toggleBtn.Position = UDim2.new(0, 5, 0, 5)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+    toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+    toggleBtn.TextScaled = true
+    toggleBtn.Text = "AutoShoot: OFF"
+    toggleBtn.Parent = frame
+
+    -- Click handler
+    toggleBtn.MouseButton1Click:Connect(function()
+        if autoShooting then
+            stopAutoShoot()
+        else
+            startAutoShoot()
+        end
+        -- Update button text
+        toggleBtn.Text = autoShooting and "AutoShoot: ON" or "AutoShoot: OFF"
+    end)
+
+    -- Update button text when autoShooting changes externally (e.g. respawn)
+    local function updateBtnText()
+        toggleBtn.Text = autoShooting and "AutoShoot: ON" or "AutoShoot: OFF"
+    end
+
+    -- Hook into the start/stop functions to keep button in sync
+    local origStart = startAutoShoot
+    local origStop = stopAutoShoot
+
+    startAutoShoot = function()
+        origStart()
+        updateBtnText()
+    end
+
+    stopAutoShoot = function()
+        origStop()
+        updateBtnText()
+    end
+
+    -- Also update when the button is clicked (already handled above)
+end
+
+-- ===== ORIGINAL FUNCTIONALITY =====
+
+local function getGun()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    return char:FindFirstChildWhichIsA("Tool")
+end
+
+local function startAutoShoot()
+    if autoShooting or reloading then return end
+    local gun = getGun()
+    if not gun then
+        warn("[AutoShoot] No gun equipped")
+        return
+    end
+    autoShooting = true
+    mouse1press()
+    warn("[AutoShoot] ON - " .. gun.Name)
+end
+
+local function stopAutoShoot()
+    autoShooting = false
+    reloading = false
+    mouse1release()
+    warn("[AutoShoot] OFF")
+end
+
+-- Character respawn: stop shooting and reset
+LocalPlayer.CharacterAdded:Connect(function()
+    stopAutoShoot()
+    -- Update GUI button text (if GUI exists)
+    local gui = LocalPlayer.PlayerGui:FindFirstChild("AutoShootGUI")
+    if gui then
+        local btn = gui:FindFirstChild("Frame"):FindFirstChild("TextButton")
+        if btn then
+            btn.Text = "AutoShoot: OFF"
+        end
+    end
+end)
+
+-- Heartbeat loop: auto reload logic
+RunService.Heartbeat:Connect(function()
+    if not autoShooting then return end
+    local gun = getGun()
+    if not gun then
+        stopAutoShoot()
+        return
+    end
+    local stats = gun:FindFirstChild("Stats")
+    if not stats then return end
+    local clip = stats:FindFirstChild("ClipSize")
+    if clip and clip.Value <= 0 and not reloading then
+        reloading = true
+        mouse1release()
+        task.wait(0.1)
+        local weaponHud = LocalPlayer.PlayerGui:FindFirstChild("WeaponHud")
+        if weaponHud then
+            local reloadBtn = weaponHud:FindFirstChild("Reload")
+            if reloadBtn and reloadBtn.Visible then
+                local absPos = reloadBtn.AbsolutePosition
+                local absSize = reloadBtn.AbsoluteSize
+                mousemoveabs(absPos.X + absSize.X / 2, absPos.Y + absSize.Y / 2)
+                task.wait(0.05)
+                mouse1click()
+            end
+        end
+        local reloadTime = stats:FindFirstChild("ReloadTime")
+        task.wait(reloadTime and reloadTime.Value or 2)
+        reloading = false
+        if autoShooting then
+            mouse1press()
+        end
+    end
+end)
+
+-- Create the GUI when the script runs
+createToggleGUI()
+
+warn("[AutoShoot] Loaded – use the on‑screen toggle button")
