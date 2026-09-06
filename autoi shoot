@@ -380,11 +380,13 @@ local function CreateSlider(parent, text, min, max, default, callback)
     Fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
     Fill.BorderSizePixel = 0
     Instance.new("UICorner", Fill).CornerRadius = UDim.new(1, 0)
-    local Knob = Instance.new("Frame")
+    -- Changed to TextButton for touch compatibility
+    local Knob = Instance.new("TextButton")
     Knob.Parent = Bar
     Knob.BackgroundColor3 = Colors.Text
     Knob.Position = UDim2.new((default - min) / (max - min), -6, 0, -3)
     Knob.Size = UDim2.new(0, 12, 0, 12)
+    Knob.Text = ""
     Knob.BorderSizePixel = 0
     Knob.ZIndex = 2
     Instance.new("UICorner", Knob).CornerRadius = UDim.new(1, 0)
@@ -868,7 +870,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
 end)
 
 -- ==========================================================--
---  CAMLOCK + SHOOT LOGIC (MODIFIED - uses OnFire directly)
+--  CAMLOCK + SHOOT LOGIC
 -- ==========================================================--
 local targetEnemy = nil
 local camlockConn = nil
@@ -955,7 +957,6 @@ function updateCamlock()
     end
 end
 
--- NEW: Auto-shoot using OnFire (PC + Mobile, no mouse simulation)
 local function fireGun()
     if isFiring then return end
     if not onFireFn then return end
@@ -981,7 +982,10 @@ end
 
 function shoot()
     if not getCurrentGun() then return end
-    if not targetEnemy or not isAlive(targetEnemy) then targetEnemy = nil; return end
+    if not targetEnemy or not isAlive(targetEnemy) then
+        targetEnemy = nil
+        return
+    end
     if not isVisible(targetEnemy) or not isLockedOn(targetEnemy) then return end
     fireGun()
 end
@@ -1360,7 +1364,7 @@ Players.PlayerRemoving:Connect(function(p)
 end)
 
 -- ==========================================================--
---  MAIN LOOP
+--  MAIN LOOP (protected with pcall)
 -- ==========================================================--
 local oldPC, oldMobile, oldTrigger = false, false, false
 local oldESP, oldName, oldSkel = false, false, false
@@ -1373,36 +1377,61 @@ local oldAutoGunType = false
 findGunFunctions()
 
 RunService.Heartbeat:Connect(function()
-    if Settings.SilentAimPC ~= oldPC or Settings.SilentAimMobile ~= oldMobile then
-        oldPC = Settings.SilentAimPC; oldMobile = Settings.SilentAimMobile
-    end
-    if Settings.Triggerbot ~= oldTrigger then oldTrigger = Settings.Triggerbot end
-    if Settings.BringEnemy ~= oldBringEnemy then
-        oldBringEnemy = Settings.BringEnemy
-        if Settings.BringEnemy then StartBringEnemy() else StopBringEnemy() end
-    end
-    if Settings.FlyEnabled then StartFly() else StopFly() end
-    if Settings.AutoGunType ~= oldAutoGunType then
-        oldAutoGunType = Settings.AutoGunType
-        if Settings.AutoGunType then StartAutoGunType() else StopAutoGunType() end
-    end
-    UpdateCombat()
-    if Settings.ESPEnemies ~= oldESP or Settings.ESPName ~= oldName or Settings.ESPSkeleton ~= oldSkel then
-        oldESP = Settings.ESPEnemies; oldName = Settings.ESPName; oldSkel = Settings.ESPSkeleton
-        SyncESP()
-    end
-    if Settings.HitboxExpand ~= oldHitbox then
-        oldHitbox = Settings.HitboxExpand
-        if Settings.HitboxExpand then EnableHitbox() else DisableHitbox() end
-    end
-    if Settings.NoRecoil ~= oldNoRecoil then
-        oldNoRecoil = Settings.NoRecoil
-        if Settings.NoRecoil then StartNoRecoil() else StopNoRecoil() end
-    end
-    if Settings.RapidFire ~= oldRapidFire then
-        oldRapidFire = Settings.RapidFire
-        if Settings.RapidFire then StartRapidFire() else StopRapidFire() end
-    end
+    -- Wrap each feature activation to prevent one error from breaking the loop
+    pcall(function()
+        if Settings.SilentAimPC ~= oldPC or Settings.SilentAimMobile ~= oldMobile then
+            oldPC = Settings.SilentAimPC; oldMobile = Settings.SilentAimMobile
+        end
+        if Settings.Triggerbot ~= oldTrigger then oldTrigger = Settings.Triggerbot end
+    end)
+
+    pcall(function()
+        if Settings.BringEnemy ~= oldBringEnemy then
+            oldBringEnemy = Settings.BringEnemy
+            if Settings.BringEnemy then StartBringEnemy() else StopBringEnemy() end
+        end
+    end)
+
+    pcall(function()
+        if Settings.FlyEnabled then StartFly() else StopFly() end
+    end)
+
+    pcall(function()
+        if Settings.AutoGunType ~= oldAutoGunType then
+            oldAutoGunType = Settings.AutoGunType
+            if Settings.AutoGunType then StartAutoGunType() else StopAutoGunType() end
+        end
+    end)
+
+    pcall(UpdateCombat)
+
+    pcall(function()
+        if Settings.ESPEnemies ~= oldESP or Settings.ESPName ~= oldName or Settings.ESPSkeleton ~= oldSkel then
+            oldESP = Settings.ESPEnemies; oldName = Settings.ESPName; oldSkel = Settings.ESPSkeleton
+            SyncESP()
+        end
+    end)
+
+    pcall(function()
+        if Settings.HitboxExpand ~= oldHitbox then
+            oldHitbox = Settings.HitboxExpand
+            if Settings.HitboxExpand then EnableHitbox() else DisableHitbox() end
+        end
+    end)
+
+    pcall(function()
+        if Settings.NoRecoil ~= oldNoRecoil then
+            oldNoRecoil = Settings.NoRecoil
+            if Settings.NoRecoil then StartNoRecoil() else StopNoRecoil() end
+        end
+    end)
+
+    pcall(function()
+        if Settings.RapidFire ~= oldRapidFire then
+            oldRapidFire = Settings.RapidFire
+            if Settings.RapidFire then StartRapidFire() else StopRapidFire() end
+        end
+    end)
 end)
 
 RunService.RenderStepped:Connect(function(dt)
